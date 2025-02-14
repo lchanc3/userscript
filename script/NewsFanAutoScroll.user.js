@@ -1,12 +1,11 @@
 // ==UserScript==
 // @name         NewsFan.jp 自動翻頁和點擊
 // @namespace    https://github.com/lchanc3/userscript
-// @version      1.0
+// @version      1.1
 // @license      MIT
 // @description  自動滾動並點擊「続きを読む」，若找不到則點擊「スタンプページへ」連結
 // @homepage     https://github.com/lchanc3/userscript
-// @updateURL    
-// @downloadURL    
+// @supportURL   https://github.com/lchanc3/userscript/issues     
 // @author       lchanc3
 // @match        https://www.life-n.jp/sp/article/?article_id=*
 // @match        https://www.trepy.jp/sp/article/?article_id=*
