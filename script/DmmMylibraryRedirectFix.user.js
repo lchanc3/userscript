@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         DMM region flag rewrite（實驗）
+// @name         DMM region flag rewrite
 // @namespace    https://dmm.co.jp/
-// @version      2.0.0
+// @version      2.0.1
 // @match        *://*.dmm.com/*
 // @match        *://*.dmm.co.jp/*
 // @run-at       document-start
@@ -91,7 +91,7 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
             if (rewrite(j)) { console.info('[dmm-rw] xhr', this.__url); out = JSON.stringify(j); }
           } catch { /* 非 JSON 原樣 */ }
           cache.set(this, out);
-          return out;                // Bug 1：第一次就回傳改寫後的
+          return out;     
         }
         if (v && typeof v === 'object' && this.responseType === 'json') rewrite(v);
         return v;
