@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DMM region flag rewrite
+// @name         DMM region flag rewrite（實驗）
 // @namespace    https://dmm.co.jp/
 // @version      2.0.0
 // @match        *://*.dmm.com/*
@@ -67,14 +67,15 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
     });
   };
 
-  // ---------- XHR：prototype getter 惰性改寫，不受 handler 註冊順序影響 ----------
+    // ---------- XHR ----------
   const _open = XMLHttpRequest.prototype.open;
+  const cache = new WeakMap();
   XMLHttpRequest.prototype.open = function () {
     this.__url = arguments[1];
+    cache.delete(this);              // Bug 2：重用時清掉上一輪
     return _open.apply(this, arguments);
   };
 
-  const cache = new WeakMap();
   for (const prop of ['responseText', 'response']) {
     const desc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, prop);
     Object.defineProperty(XMLHttpRequest.prototype, prop, {
@@ -83,15 +84,14 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
         const v = desc.get.call(this);
         if (this.readyState !== 4 || !isTarget(this.__url || '')) return v;
         if (typeof v === 'string') {
-          if (!cache.has(this)) {
-            let j; try { j = JSON.parse(v); } catch { return v; }
-            if (rewrite(j)) {
-              console.info('[dmm-rw] xhr', this.__url);
-              cache.set(this, JSON.stringify(j));
-            }
-            return v;
-          }
-          return cache.get(this);
+          if (cache.has(this)) return cache.get(this);
+          let out = v;
+          try {
+            const j = JSON.parse(v);
+            if (rewrite(j)) { console.info('[dmm-rw] xhr', this.__url); out = JSON.stringify(j); }
+          } catch { /* 非 JSON 原樣 */ }
+          cache.set(this, out);
+          return out;                // Bug 1：第一次就回傳改寫後的
         }
         if (v && typeof v === 'object' && this.responseType === 'json') rewrite(v);
         return v;
