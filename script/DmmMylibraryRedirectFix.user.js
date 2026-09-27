@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DMM region flag rewrite
 // @namespace    https://dmm.co.jp/
-// @version      2.1.0
+// @version      2.2.0
 // @match        *://*.dmm.com/*
 // @match        *://*.dmm.co.jp/*
 // @run-at       document-start
