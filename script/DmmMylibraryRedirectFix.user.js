@@ -64,10 +64,23 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
   };
 
   // key 對上才動，其他欄位原樣保留
+  //
+  // accessStatus 的判斷在網站 JS（ipInfo → isForeign / redirectUrl，2026-09-27 查到）：
+  //   ALLOW              → 不是海外，不跳轉      ← 改成這個
+  //   RESTRICT_FUNCTION  → 海外，不跳轉
+  //   DENY 或 /anime 頁  → 跳 not-available-in-your-region
+  //   沒登入             → 跳登入頁
+  //   有 ckcy_remedied_check=ec_mrnhbtk 或在 /mylibrary → 海外，不跳轉
+  //   其他               → 跳轉
+  // 舊版改成 'OK' 不在上面任何一條，會一路落到後面的跳轉判斷——
+  // 動漫頁一定被踢、其他頁要剛好登入且有 cookie 才過。
+  //
+  // countryCode：網站依它寫 ckcy cookie（JP → 1、其他 → 2），改成 JP 才不會把上面設的 ckcy=1 蓋掉。
+  // 這些都只影響前端的顯示與跳轉，伺服器端的限制（購買、播放）不受影響。
   const RULES = {
     isAllowForeign: v => (v === false ? true : v),
-    accessStatus:   v => (v === 'RESTRICT_USER' ? 'OK' : v), // ⚠ 合法值未知，HAR 只看過 RESTRICT_USER
-    // countryCode: v => (v === 'TW' ? 'JP' : v), // 只改 UI 顯示，不影響伺服器決策
+    accessStatus:   v => (typeof v === 'string' && v !== 'ALLOW' ? 'ALLOW' : v),
+    countryCode:    v => (typeof v === 'string' && v !== 'JP' ? 'JP' : v),
   };
 
   const isTarget = (url) => {
