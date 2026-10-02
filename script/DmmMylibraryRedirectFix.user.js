@@ -1,26 +1,27 @@
 // ==UserScript==
 // @name         DMM region flag rewrite
 // @namespace    https://dmm.co.jp/
-// @version      2.2.0
+// @version      2.7.0
 // @match        *://*.dmm.com/*
 // @match        *://*.dmm.co.jp/*
+// @match        *://*.fanza.jp/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
 
 // ===== cookie 段 =====
-const domain = location.hostname.endsWith('.dmm.co.jp') || location.hostname === 'dmm.co.jp'
-  ? '.dmm.co.jp' : '.dmm.com';
-for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1']]) {
+const domain = ['dmm.co.jp', 'fanza.jp', 'dmm.com']
+  .find(d => location.hostname === d || location.hostname.endsWith('.' + d));
+if (domain) for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1']]) {
   document.cookie = `${name}=; path=/; max-age=0`;   // 清掉 host-only 同名舊值
-  document.cookie = `${name}=${value}; domain=${domain}; path=/; max-age=31536000`;
+  document.cookie = `${name}=${value}; domain=.${domain}; path=/; max-age=31536000`;
 }
 
 (function () {
   'use strict';
 
   // 在 HAR 看到誰回 isAllowForeign / accessStatus 就加誰
-  const HOSTS = new Set(['api.video.dmm.co.jp']);
+  const HOSTS = new Set(['api.video.dmm.co.jp', 'api.video.fanza.jp', 'api.tv.dmm.co.jp', 'api.tv.dmm.com']);
 
   // ===== 請求段：搜尋結果補回「海外不可購買」的作品 =====
   //
@@ -63,21 +64,51 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
     } catch { return url; }
   };
 
-  // key 對上才動，其他欄位原樣保留
-  //
-  // accessStatus 的判斷在網站 JS（ipInfo → isForeign / redirectUrl，2026-09-27 查到）：
-  //   ALLOW              → 不是海外，不跳轉      ← 改成這個
-  //   RESTRICT_FUNCTION  → 海外，不跳轉
-  //   DENY 或 /anime 頁  → 跳 not-available-in-your-region
-  //   沒登入             → 跳登入頁
-  //   有 ckcy_remedied_check=ec_mrnhbtk 或在 /mylibrary → 海外，不跳轉
-  //   其他               → 跳轉
-  // 舊版改成 'OK' 不在上面任何一條，會一路落到後面的跳轉判斷——
-  // 動漫頁一定被踢、其他頁要剛好登入且有 cookie 才過。
-  //
-  // countryCode：網站依它寫 ckcy cookie（JP → 1、其他 → 2），改成 JP 才不會把上面設的 ckcy=1 蓋掉。
-  // 這些都只影響前端的顯示與跳轉，伺服器端的限制（購買、播放）不受影響。
+
+  const SAMPLE_THUMB = /^(?:https?:)?\/\/pics\.litevideo\.dmm\.(?:co\.jp|com)\/pv\/([^/]+)\/([^/?#]+)\.jpg/;
+  const SAMPLE_HOST = /(?:^|\.)dmm\.com$/.test(location.hostname) ? 'cc3001.dmm.com' : 'cc3001.dmm.co.jp';
+  const sampleToMp4 = (v, found) => {
+    if (!v || typeof v !== 'object' || typeof v.url !== 'string' || !v.url.includes('.m3u8')) return v;
+    const m = typeof v.thumbnail === 'string' && v.thumbnail.match(SAMPLE_THUMB);
+    if (!m) return v;
+    const n = { ...v, url: `https://${SAMPLE_HOST}/pv/${m[1]}/${m[2]}_mhb_w.mp4` };
+    if (found) found.push(n);
+    return n;
+  };
+
+  // 不能用 fetch/HEAD 探（ACAO: * 不給帶 cookie 的請求讀），用 <video> 只載 metadata 來試；
+  // 同樣要跟頁面同站才會帶 cookie（上面 SAMPLE_HOST 已經挑好了）。
+  const canPlay = (src) => new Promise((resolve) => {
+    const v = document.createElement('video');
+    const done = (ok) => { clearTimeout(t); v.removeAttribute('src'); v.load(); resolve(ok); };
+    const t = setTimeout(() => done(false), 4000);
+    v.muted = true;
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => done(true);
+    v.onerror = () => done(false);
+    v.src = src;
+  });
+
+  const bestSample = new Map();      // _mhb_w 網址 → Promise<最佳網址>，同一部不重複試
+  const pickBestSample = (base) => {
+    if (!bestSample.has(base)) {
+      bestSample.set(base, (async () => {
+        for (const q of ['_hhb_w', '_hmb_w']) {
+          const url = base.replace(/_mhb_w\.mp4$/, `${q}.mp4`);
+          if (await canPlay(url)) return url;
+        }
+        return base;
+      })());
+    }
+    return bestSample.get(base);
+  };
+
+  const upgradeSamples = (found) =>
+    Promise.all(found.map(async (s) => { s.url = await pickBestSample(s.url); }));
+
   const RULES = {
+    sampleMovie:     sampleToMp4,
+    isForeignAccess: v => (v === true ? false : v),
     isAllowForeign: v => (v === false ? true : v),
     accessStatus:   v => (typeof v === 'string' && v !== 'ALLOW' ? 'ALLOW' : v),
     countryCode:    v => (typeof v === 'string' && v !== 'JP' ? 'JP' : v),
@@ -87,14 +118,15 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
     try { return HOSTS.has(new URL(url, location.href).hostname); } catch { return false; }
   };
 
-  const rewrite = (j) => {
+  // found：有給就收集改成 mp4 的 sampleMovie，讓 fetch 段之後升級畫質
+  const rewrite = (j, found) => {
     let hit = false;
     (function walk(o) {
       if (!o || typeof o !== 'object') return;
       if (Array.isArray(o)) { o.forEach(walk); return; }
       for (const k of Object.keys(o)) {
         const f = RULES[k];
-        if (f) { const n = f(o[k]); if (n !== o[k]) { o[k] = n; hit = true; } }
+        if (f) { const n = f(o[k], found); if (n !== o[k]) { o[k] = n; hit = true; } }
         else walk(o[k]);
       }
     })(j);
@@ -136,11 +168,12 @@ for (const [name, value] of [['ckcy_remedied_check', 'ec_mrnhbtk'], ['ckcy', '1'
       if (!(res.headers.get('content-type') || '').includes('json')) return res;
       return res.clone().text().then(text => {
         let j; try { j = JSON.parse(text); } catch { return res; }
-        if (!rewrite(j)) return res;
+        const found = [];
+        if (!rewrite(j, found)) return res;
         console.info('[dmm-rw] fetch', url);
-        return new Response(JSON.stringify(j), {
+        return upgradeSamples(found).then(() => new Response(JSON.stringify(j), {
           status: res.status, statusText: res.statusText, headers: res.headers,
-        });
+        }));
       }).catch(() => res);
     });
   };
